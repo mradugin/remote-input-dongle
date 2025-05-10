@@ -92,7 +92,7 @@ class MouseCallbacks: public NimBLECharacteristicCallbacks {
             int8_t x = value[1];
             int8_t y = value[2];
             int8_t wheel = (value.size() > 3) ? value[3] : 0;
-
+            int8_t pan = (value.size() > 4) ? value[4] : 0;
             Serial.print("Mouse event received: ");
             Serial.print(buttons);
             Serial.print(", ");
@@ -100,9 +100,11 @@ class MouseCallbacks: public NimBLECharacteristicCallbacks {
             Serial.print(", ");
             Serial.print(y);
             Serial.print(", ");
-            Serial.println(wheel);
+            Serial.print(wheel);
+            Serial.print(", ");
+            Serial.println(pan);
 #ifdef ARDUINO_USB_MODE
-            Mouse.move(x, y, wheel);
+            Mouse.move(x, y, wheel, pan);
             if (buttons != 0) {
                 Mouse.press(buttons);
             } else {
