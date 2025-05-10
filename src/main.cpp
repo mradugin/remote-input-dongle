@@ -48,7 +48,8 @@ class KeyboardCallbacks: public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic *pCharacteristic) {
         std::vector<uint8_t> value = pCharacteristic->getValue();
 
-        if (value.size() >= 8) {
+        if (value.size() == 2) {
+            // Format: [modifiers, key]
 #ifdef ARDUINO_USB_MODE
             KeyReport report;
 #else
@@ -59,20 +60,13 @@ class KeyboardCallbacks: public NimBLECharacteristicCallbacks {
             };
             KeyReport report;
 #endif
+            memset(&report, 0, sizeof(report));
             report.modifiers = value[0];
-            report.reserved = value[1];
-            for (int i = 0; i < sizeof(report.keys) / sizeof(report.keys[0]); i++) {
-                report.keys[i] = value[i + 2];
-            }
-            Serial.print("Keyboard write received: ");
+            report.keys[0] = value[1];
+            Serial.print("Keyboard event: ");
             Serial.print(report.modifiers);
-            Serial.print(", ");
-            Serial.print(report.reserved);
-            Serial.print(", ");
-            for (int i = 0; i < sizeof(report.keys) / sizeof(report.keys[0]); i++) {
-                Serial.print(report.keys[i]);
-                Serial.print(", ");
-            }
+            Serial.print(", ");;
+            Serial.print(report.keys[0]);
             Serial.println();
 #ifdef ARDUINO_USB_MODE
             Keyboard.sendReport(&report);
@@ -86,14 +80,14 @@ class MouseCallbacks: public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic *pCharacteristic) {
         std::vector<uint8_t> value = pCharacteristic->getValue();
 
-        if (value.size() >= 3) {
-            // Format: [buttons, x, y, wheel]
+        if (value.size() >= 3 && value.size() <= 5) {
+            // Format: [buttons, x, y, wheel, pan]
             uint8_t buttons = value[0];
             int8_t x = value[1];
             int8_t y = value[2];
             int8_t wheel = (value.size() > 3) ? value[3] : 0;
             int8_t pan = (value.size() > 4) ? value[4] : 0;
-            Serial.print("Mouse event received: ");
+            Serial.print("Mouse event: ");
             Serial.print(buttons);
             Serial.print(", ");
             Serial.print(x);
