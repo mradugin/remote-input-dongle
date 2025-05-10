@@ -4,7 +4,7 @@
 #include <NimBLEUtils.h>
 #ifdef ARDUINO_USB_MODE
 #include "USB.h"
-#include "USBHIDMouseCharacteristich"
+#include "USBHIDKeyboard.h"
 #include "USBHIDMouse.h"
 #endif
 
@@ -13,22 +13,16 @@
 #define KEYBOARD_CHAR_UUID  "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define MOUSE_CHAR_UUID     "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
-// BLE Server and Characteristics
 NimBLEServer* Server = nullptr;
 
 #ifdef ARDUINO_USB_MODE
-// USB HID objects
 USBHIDKeyboard Keyboard;
 USBHIDMouse Mouse;
 #endif
 
-// Connection state
-bool deviceConnected = false;
-
 // Callback for device connection
 class ServerCallbacks: public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* server, ble_gap_conn_desc* desc) {
-        deviceConnected = true;
         Serial.println("Device connected");
         
         // Update connection parameters for better performance
@@ -36,7 +30,6 @@ class ServerCallbacks: public NimBLEServerCallbacks {
     }
 
     void onDisconnect(NimBLEServer* server) {
-        deviceConnected = false;
         Serial.println("Device disconnected");
         // Restart advertising
         Server->getAdvertising()->start();
@@ -112,11 +105,9 @@ class MouseCallbacks: public NimBLECharacteristicCallbacks {
 void setup() {
     Serial.begin(115200);
     
-
 #ifdef ARDUINO_USB_MODE
-    // Initialize USB HID
     USB.begin();
-    MouseCharacteristicbegin();
+    Keyboard.begin();
     Mouse.begin();
 #endif
     
@@ -133,7 +124,7 @@ void setup() {
     Server->setCallbacks(new ServerCallbacks());
    
     // Create BLE Service
-    NimBLEService *service = Server->createService(SERVICE_UUID);
+    auto service = Server->createService(SERVICE_UUID);
     
     // Create Keyboard Characteristic
     auto keyboardCharacteristic = service->createCharacteristic(
@@ -166,6 +157,5 @@ void setup() {
 }
 
 void loop() {
-    // Main loop is empty as all processing is done in callbacks
     delay(1000);
 }
