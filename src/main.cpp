@@ -48,26 +48,34 @@ class ServerCallbacks: public NimBLEServerCallbacks {
 class KeyboardCallbacks: public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic *pCharacteristic) {
         std::vector<uint8_t> value = pCharacteristic->getValue();
+        const auto MaxKeys = 6;
 
-        if (value.size() == 2) {
-            // Format: [modifiers, key]
+        if (value.size() >= 2 && value.size() <= 1 + MaxKeys) {
+            // Format: modifiers, key1 [, key2, key3, key4, key5, key6]
 #ifdef ARDUINO_USB_MODE
             KeyReport report;
 #else
             struct KeyReport {
                 uint8_t modifiers;
                 uint8_t reserved;
-                uint8_t keys[6];
+                uint8_t keys[MaxKeys];
             };
             KeyReport report;
 #endif
             memset(&report, 0, sizeof(report));
             report.modifiers = value[0];
-            report.keys[0] = value[1];
+
+            const auto keysSize = value.size() - 1;
+            for (int i = 1; i < keysSize; i++) {
+                report.keys[i - 1] = value[i];
+            }
+
             Serial.print("Keyboard event: ");
             Serial.print(report.modifiers);
-            Serial.print(", ");;
-            Serial.print(report.keys[0]);
+            for (int i = 0; i < keysSize; i++) {
+                Serial.print(", ");
+                Serial.print(report.keys[i]);
+            }
             Serial.println();
 #ifdef ARDUINO_USB_MODE
             Keyboard.sendReport(&report);
@@ -82,7 +90,7 @@ class MouseCallbacks: public NimBLECharacteristicCallbacks {
         std::vector<uint8_t> value = pCharacteristic->getValue();
 
         if (value.size() >= 3 && value.size() <= 5) {
-            // Format: [buttons, x, y, wheel, pan]
+            // Format: buttons, x, y, wheel, pan
             uint8_t buttons = value[0];
             int8_t x = value[1];
             int8_t y = value[2];
