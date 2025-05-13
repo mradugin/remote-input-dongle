@@ -3,10 +3,6 @@
 #include <NimBLEServer.h>
 #include <NimBLEUtils.h>
 
-#ifdef USE_BLE_OTA
-#include <NimBLEOta.h>
-#endif
-
 #ifdef ARDUINO_USB_MODE
 #include "USB.h"
 #include "USBHIDKeyboard.h"
@@ -19,9 +15,6 @@
 #define MOUSE_CHAR_UUID     "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
 NimBLEServer* Server = nullptr;
-#ifdef USE_BLE_OTA
-NimBLEOta BleOta;
-#endif
 
 #ifdef ARDUINO_USB_MODE
 USBHIDKeyboard Keyboard;
@@ -135,10 +128,8 @@ void setup() {
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
     NimBLEDevice::setSecurityAuth(false, true, true);
 
-#ifdef USE_BLE_OTA
-    BleOta.start();
-#endif
-    
+    NimBLEDevice::setMTU(32);
+
     Server = NimBLEDevice::createServer();
     Server->setCallbacks(new ServerCallbacks());
    
@@ -166,9 +157,7 @@ void setup() {
     auto advertising = Server->getAdvertising();
     advertising->addServiceUUID(SERVICE_UUID);
     advertising->setName("Remote Input Dongle");
-    advertising->setMinInterval(6);
-    advertising->setMaxInterval(8);
- 
+    advertising->enableScanResponse(true);
     advertising->start();
     
     Serial.println("Remote Input Dongle is Ready!");
