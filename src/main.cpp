@@ -157,7 +157,9 @@ void setup() {
     auto advertising = Server->getAdvertising();
     advertising->addServiceUUID(SERVICE_UUID);
     advertising->setName("Remote Input Dongle");
-    advertising->enableScanResponse(true);
+    advertising->setScanResponse(true);
+    advertising->setMinPreferred(6);
+    advertising->setMaxPreferred(8);
     advertising->start();
     
     Serial.println("Remote Input Dongle is Ready!");
