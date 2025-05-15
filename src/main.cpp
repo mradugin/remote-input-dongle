@@ -59,8 +59,8 @@ class KeyboardCallbacks: public NimBLECharacteristicCallbacks {
             report.modifiers = value[0];
 
             const auto keysSize = value.size() - 1;
-            for (int i = 1; i < keysSize; i++) {
-                report.keys[i - 1] = value[i];
+            for (int i = 0; i < keysSize; i++) {
+                report.keys[i] = value[i + 1];
             }
 
             Serial.print("Keyboard event: ");
