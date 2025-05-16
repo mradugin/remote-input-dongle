@@ -25,7 +25,7 @@ USBHIDMouse Mouse;
 class ServerCallbacks: public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* server, ble_gap_conn_desc* desc) {
         Serial.println("Device connected");
-        
+ 
         // Update connection parameters for better performance
         Server->updateConnParams(desc->conn_handle, 6, 7, 0, 500);
     }
