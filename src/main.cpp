@@ -112,7 +112,7 @@ class ServerCallbacks: public NimBLEServerCallbacks {
 
 // Callback for keyboard characteristic
 class KeyboardCallbacks: public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic *pCharacteristic) {
+    void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& ) override {
         std::vector<uint8_t> value = pCharacteristic->getValue();
         const auto MaxKeys = 6;
 
@@ -153,7 +153,7 @@ class KeyboardCallbacks: public NimBLECharacteristicCallbacks {
 
 // Callback for mouse characteristic
 class MouseCallbacks: public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic *pCharacteristic) {
+    void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& ) override {
         std::vector<uint8_t> value = pCharacteristic->getValue();
 
         if (value.size() >= 3 && value.size() <= 5) {
@@ -216,14 +216,14 @@ void setup() {
     // Create Keyboard Characteristic
     auto keyboardCharacteristic = service->createCharacteristic(
         KEYBOARD_CHAR_UUID,
-        NIMBLE_PROPERTY::WRITE_NR  // Add WRITE_NR for better performance
+        NIMBLE_PROPERTY::WRITE_NR
     );
     keyboardCharacteristic->setCallbacks(new KeyboardCallbacks());
     
     // Create Mouse Characteristic
     auto mouseCharacteristic = service->createCharacteristic(
         MOUSE_CHAR_UUID,
-        NIMBLE_PROPERTY::WRITE_NR  // Add WRITE_NR for better performance
+        NIMBLE_PROPERTY::WRITE_NR
     );
     mouseCharacteristic->setCallbacks(new MouseCallbacks());
     
@@ -234,9 +234,8 @@ void setup() {
     auto advertising = Server->getAdvertising();
     advertising->addServiceUUID(SERVICE_UUID);
     advertising->setName("Remote Input Dongle");
-    advertising->setScanResponse(true);
-    advertising->setMinPreferred(6);
-    advertising->setMaxPreferred(8);
+    advertising->enableScanResponse(true);
+    advertising->setPreferredParams(6, 8);
     advertising->start();
     
     Serial.println("Remote Input Dongle is Ready!");
