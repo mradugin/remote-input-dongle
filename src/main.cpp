@@ -1,3 +1,5 @@
+#include <mutex>
+
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <NimBLEServer.h>
@@ -18,7 +20,7 @@
 // LED Configuration
 const unsigned long LED_ADVERTISING_BLINK_INTERVAL = 1000;
 const CRGB LED_ADVERTISING_COLOR = CRGB::Blue;
-const CRGB LED_CONNECTED_COLOR = CRGB::Green;
+const CRGB LED_CONNECTED_COLOR = CRGB::Blue;
 const CRGB LED_KEYBOARD_EVENT_COLOR = CRGB::Red;
 const CRGB LED_MOUSE_EVENT_COLOR = CRGB::Green;
 
@@ -32,81 +34,91 @@ USBHIDMouse Mouse;
 class LED {
 public:
     void setup() {
+        std::lock_guard<std::mutex> lock(mutex_);
         const uint8_t LED_PIN = 21;
         const uint8_t NUM_LEDS = 1;
         const uint8_t LED_BRIGHTNESS = 30;
-        FastLED.addLeds<WS2812, LED_PIN, RGB>(&led, NUM_LEDS);
+        FastLED.addLeds<WS2812, LED_PIN, RGB>(&led_, NUM_LEDS);
         FastLED.setBrightness(LED_BRIGHTNESS);
-        led = CRGB::Black;
+        led_ = CRGB::Black;
         FastLED.show();
     }
 
     void setTemp(CRGB color) {
-        blinkInterval = 0;
-        led = color;
+        std::lock_guard<std::mutex> lock(mutex_);
+        blinkInterval_ = 0;
+        led_ = color;
         FastLED.show();
     }
 
     void setSolid(CRGB color) {
-        blinkInterval = 0;
-        this->onColor = onColor;
-        led = color;
+        std::lock_guard<std::mutex> lock(mutex_);
+        blinkInterval_ = 0;
+        onColor_ = color;
+        led_ = color;
         FastLED.show();
     }
 
     void setBlink(CRGB onColor, CRGB offColor, unsigned long interval) {
-        this->onColor = onColor;
-        this->offColor = offColor;
-        blinkInterval = interval;
-        lastBlinkTime = millis();
-        ledState = true;
-        led = onColor;
+        std::lock_guard<std::mutex> lock(mutex_);
+        onColor_ = onColor;
+        offColor_ = offColor;
+        blinkInterval_ = interval;
+        lastBlinkTime_ = millis();
+        ledState_ = true;
+        led_ = onColor;
         FastLED.show();
     }
 
     void loop() {
-        if (blinkInterval > 0) {
-            if (lastBlinkTime + blinkInterval < millis()) {
-                ledState = !ledState;
-                led = ledState ? onColor : offColor;
-                lastBlinkTime = millis();
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (blinkInterval_ > 0) {
+            if (lastBlinkTime_ + blinkInterval_ < millis()) {
+                ledState_ = !ledState_;
+                led_ = ledState_ ? onColor_ : offColor_;
+                lastBlinkTime_ = millis();
                 FastLED.show();
             }
         }
         else {
-            if (led != onColor) {
-                led = onColor;
+            if (led_ != onColor_) {
+                led_ = onColor_;
                 FastLED.show();
             }
         }
     }
 
 private:
-    CRGB led;
-    CRGB onColor;
-    CRGB offColor;
-    unsigned long blinkInterval = 0;
-    bool ledState = false;
-    unsigned long lastBlinkTime = 0;
+    CRGB led_;
+    CRGB onColor_;
+    CRGB offColor_;
+    unsigned long blinkInterval_ = 0;
+    bool ledState_ = false;
+    unsigned long lastBlinkTime_ = 0;
+    std::mutex mutex_;
 };
 
-LED led;
+LED Led;
 
 // Callback for device connection
 class ServerCallbacks: public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* server, ble_gap_conn_desc* desc) {
+    void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
         Serial.println("Device connected");
-        led.setSolid(CRGB::Blue);
+
+        Led.setSolid(LED_CONNECTED_COLOR);
  
         // Update connection parameters for better performance
-        Server->updateConnParams(desc->conn_handle, 6, 7, 0, 500);
+        Server->updateConnParams(connInfo.getConnHandle(), 6, 7, 0, 500);
     }
 
-    void onDisconnect(NimBLEServer* server) {
+    void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
         Serial.println("Device disconnected");
-        led.setBlink(LED_ADVERTISING_COLOR, CRGB::Black, LED_ADVERTISING_BLINK_INTERVAL);
+
+        Led.setBlink(LED_ADVERTISING_COLOR, CRGB::Black, LED_ADVERTISING_BLINK_INTERVAL);
+
         // Restart advertising
         Server->getAdvertising()->start();
+
     }
 };
 
@@ -117,7 +129,7 @@ class KeyboardCallbacks: public NimBLECharacteristicCallbacks {
         const auto MaxKeys = 6;
 
         if (value.size() >= 2 && value.size() <= 1 + MaxKeys) {
-            led.setTemp(LED_KEYBOARD_EVENT_COLOR);
+            Led.setTemp(LED_KEYBOARD_EVENT_COLOR);
             // Format: modifiers, key1 [, key2, key3, key4, key5, key6]
 #ifdef ARDUINO_USB_MODE
             KeyReport report;
@@ -157,7 +169,7 @@ class MouseCallbacks: public NimBLECharacteristicCallbacks {
         std::vector<uint8_t> value = pCharacteristic->getValue();
 
         if (value.size() >= 3 && value.size() <= 5) {
-            led.setTemp(LED_MOUSE_EVENT_COLOR);
+            Led.setTemp(LED_MOUSE_EVENT_COLOR);
             // Format: buttons, x, y, wheel, pan
             uint8_t buttons = value[0];
             int8_t x = value[1];
@@ -189,8 +201,8 @@ class MouseCallbacks: public NimBLECharacteristicCallbacks {
 void setup() {
     Serial.begin(115200);
     
-    led.setup();
-    
+    Led.setup();
+
 #ifdef ARDUINO_USB_MODE
     USB.begin();
     Keyboard.begin();
@@ -229,7 +241,9 @@ void setup() {
     
     // Start the service
     service->start();
-    
+
+    Led.setBlink(LED_ADVERTISING_COLOR, CRGB::Black, LED_ADVERTISING_BLINK_INTERVAL);
+
     // Start advertising
     auto advertising = Server->getAdvertising();
     advertising->addServiceUUID(SERVICE_UUID);
@@ -239,10 +253,9 @@ void setup() {
     advertising->start();
     
     Serial.println("Remote Input Dongle is Ready!");
-    led.setBlink(LED_ADVERTISING_COLOR, CRGB::Black, LED_ADVERTISING_BLINK_INTERVAL);
 }
 
 void loop() {
-    led.loop();
-    delay(100);    // Small delay to prevent too frequent updates
+    Led.loop();
+    delay(100);
 }
