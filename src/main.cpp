@@ -109,6 +109,8 @@ class ServerCallbacks: public NimBLEServerCallbacks {
  
         // Update connection parameters for better performance
         Server->updateConnParams(connInfo.getConnHandle(), 6, 7, 0, 500);
+
+        NimBLEDevice::startSecurity(connInfo.getConnHandle());
     }
 
     void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
@@ -215,7 +217,7 @@ void setup() {
     NimBLEDevice::setPower(ESP_PWR_LVL_N0);
 
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
-    NimBLEDevice::setSecurityAuth(false, true, true);
+    NimBLEDevice::setSecurityAuth(true, true, true);
 
     NimBLEDevice::setMTU(32);
 
