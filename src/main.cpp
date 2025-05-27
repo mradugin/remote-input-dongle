@@ -1,4 +1,6 @@
 #include <mutex>
+#include <condition_variable>
+#include <Bounce2.h>
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
@@ -10,6 +12,31 @@
 #include "USB.h"
 #include "USBHIDKeyboard.h"
 #include "USBHIDMouse.h"
+#else
+static const size_t MaxKeys = 6;
+
+struct KeyReport {
+    uint8_t modifiers;
+    uint8_t reserved;
+    uint8_t keys[MaxKeys];
+};
+
+class USBHIDKeyboard {
+public:
+    void begin() {}
+    void sendReport(KeyReport* report) {}
+    size_t write(const uint8_t *buffer, size_t size) {
+        return size;
+    }
+};
+
+class USBHIDMouse {  
+public:
+    void begin() {}
+    void move(int x, int y, int wheel, int pan) {}
+    void press(int buttons) {}
+    void release() {}
+};
 #endif
 
 // BLE Service and Characteristic UUIDs
@@ -24,12 +51,12 @@ const CRGB LED_CONNECTED_COLOR = CRGB::Blue;
 const CRGB LED_KEYBOARD_EVENT_COLOR = CRGB::Red;
 const CRGB LED_MOUSE_EVENT_COLOR = CRGB::Green;
 
-NimBLEServer* Server = nullptr;
+// Button configuration
+const uint8_t BOOT_BUTTON_PIN = 0;  // ESP32-S3 boot button
+Bounce2::Button bootButton = Bounce2::Button();
 
-#ifdef ARDUINO_USB_MODE
-USBHIDKeyboard Keyboard;
-USBHIDMouse Mouse;
-#endif
+USBHIDKeyboard keyboard;
+USBHIDMouse mouse;
 
 class LED {
 public:
@@ -98,17 +125,93 @@ private:
     std::mutex mutex_;
 };
 
-LED Led;
+LED statusLed;
+
+class PairingConfirmation {
+public:
+    const unsigned long PAIRING_REQUEST_TIMEOUT = 30000;
+
+    PairingConfirmation(Bounce2::Button& bootButton, LED& statusLed, USBHIDKeyboard& keyboard): 
+        bootButton_(bootButton), statusLed_(statusLed), keyboard_(keyboard) {}
+
+    bool wait_for_confirmation(uint32_t pin) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        pairing_request_time_ = millis();
+        is_pairing_requested_ = true;
+        pin_ = pin;
+        statusLed_.setBlink(CRGB::Yellow, CRGB::Black, 500);  // Blink yellow while waiting for confirmation
+        cv_.wait(lock, [this] { return !is_pairing_requested_; });
+        bool result = is_pairing_confirmed_;
+        is_pairing_confirmed_ = false;
+        return result;
+    }
+
+    void confirm() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (is_pairing_requested_) {
+            is_pairing_confirmed_ = true;
+            is_pairing_requested_ = false;
+            cv_.notify_all();
+            Serial.println("Pairing confirmed");
+        }
+    }
+
+    void reject() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (is_pairing_requested_) {
+            is_pairing_confirmed_ = false;
+            is_pairing_requested_ = false;
+            cv_.notify_all();
+            Serial.println("Pairing rejected");
+        }
+    }
+
+    void loop() {
+        bootButton_.update();
+        if (bootButton_.pressed()) {
+            confirm();
+        }
+
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (is_pairing_requested_) {
+            Serial.println("Pairing requested");
+            if (pin_ != 0) {
+                String pin_str = String("PIN: ") + String(pin_) + String("\n") + String("Press button on dongle to confirm\n");
+                keyboard_.write((uint8_t*)pin_str.c_str(), pin_str.length());
+                pin_ = 0;
+            }
+            if (millis() - pairing_request_time_ > PAIRING_REQUEST_TIMEOUT) {
+                lock.unlock();
+                reject();
+            }
+        }
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool is_pairing_requested_{false};
+    bool is_pairing_confirmed_{false};
+    unsigned long pairing_request_time_ = 0;
+    uint32_t pin_ = 0;
+    Bounce2::Button& bootButton_;
+    LED& statusLed_;
+    USBHIDKeyboard& keyboard_;
+};
+
+PairingConfirmation pairingConfirmation(bootButton, statusLed, keyboard);
 
 // Callback for device connection
 class ServerCallbacks: public NimBLEServerCallbacks {
+public:
+    ServerCallbacks(LED& statusLed, PairingConfirmation& pairingConfirmation, NimBLEServer* server): 
+        statusLed_(statusLed), pairingConfirmation_(pairingConfirmation), server_(server) {}
+private:
     void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
         Serial.println("Device connected");
 
-        Led.setSolid(LED_CONNECTED_COLOR);
- 
         // Update connection parameters for better performance
-        Server->updateConnParams(connInfo.getConnHandle(), 6, 7, 0, 500);
+        server->updateConnParams(connInfo.getConnHandle(), 6, 7, 0, 500);
 
         NimBLEDevice::startSecurity(connInfo.getConnHandle());
     }
@@ -116,33 +219,53 @@ class ServerCallbacks: public NimBLEServerCallbacks {
     void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
         Serial.println("Device disconnected");
 
-        Led.setBlink(LED_ADVERTISING_COLOR, CRGB::Black, LED_ADVERTISING_BLINK_INTERVAL);
+        statusLed_.setBlink(LED_ADVERTISING_COLOR, CRGB::Black, LED_ADVERTISING_BLINK_INTERVAL);
 
         // Restart advertising
-        Server->getAdvertising()->start();
-
+        server->getAdvertising()->start();
     }
+
+    void onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t pin) override {
+        NimBLEDevice::injectConfirmPasskey(connInfo, pairingConfirmation_.wait_for_confirmation(pin));
+    }
+
+    void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
+        Serial.println("Authentication complete");
+        Serial.print("Bonded: ");
+        Serial.println(connInfo.isBonded());
+        Serial.print("Authenticated: ");
+        Serial.println(connInfo.isAuthenticated());
+        Serial.print("Encrypted: ");
+        Serial.println(connInfo.isEncrypted());
+
+        if (!connInfo.isBonded() || !connInfo.isAuthenticated() || !connInfo.isEncrypted()) {
+            Serial.println("Authentication failed");
+            server_->disconnect(connInfo);
+        } else {
+            statusLed_.setSolid(LED_CONNECTED_COLOR);
+        }
+    }
+
+private:
+    LED& statusLed_;
+    PairingConfirmation& pairingConfirmation_;
+    NimBLEServer* server_;
 };
 
 // Callback for keyboard characteristic
 class KeyboardCallbacks: public NimBLECharacteristicCallbacks {
+public:
+    KeyboardCallbacks(LED& statusLed, USBHIDKeyboard& keyboard): 
+        statusLed_(statusLed), keyboard_(keyboard) {}
+private:
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& ) override {
         std::vector<uint8_t> value = pCharacteristic->getValue();
         const auto MaxKeys = 6;
 
         if (value.size() >= 2 && value.size() <= 1 + MaxKeys) {
-            Led.setTemp(LED_KEYBOARD_EVENT_COLOR);
+            statusLed_.setTemp(LED_KEYBOARD_EVENT_COLOR);
             // Format: modifiers, key1 [, key2, key3, key4, key5, key6]
-#ifdef ARDUINO_USB_MODE
             KeyReport report;
-#else
-            struct KeyReport {
-                uint8_t modifiers;
-                uint8_t reserved;
-                uint8_t keys[MaxKeys];
-            };
-            KeyReport report;
-#endif
             memset(&report, 0, sizeof(report));
             report.modifiers = value[0];
 
@@ -158,20 +281,26 @@ class KeyboardCallbacks: public NimBLECharacteristicCallbacks {
                 Serial.print(report.keys[i]);
             }
             Serial.println();
-#ifdef ARDUINO_USB_MODE
-            Keyboard.sendReport(&report);
-#endif
+
+            keyboard_.sendReport(&report);
         }
     }
+
+private:
+    LED& statusLed_;
+    USBHIDKeyboard& keyboard_;
 };
 
 // Callback for mouse characteristic
 class MouseCallbacks: public NimBLECharacteristicCallbacks {
+public:
+    MouseCallbacks(LED& statusLed, USBHIDMouse& mouse) : statusLed_(statusLed), mouse_(mouse) {}
+private:
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& ) override {
         std::vector<uint8_t> value = pCharacteristic->getValue();
 
         if (value.size() >= 3 && value.size() <= 5) {
-            Led.setTemp(LED_MOUSE_EVENT_COLOR);
+            statusLed_.setTemp(LED_MOUSE_EVENT_COLOR);
             // Format: buttons, x, y, wheel, pan
             uint8_t buttons = value[0];
             int8_t x = value[1];
@@ -188,76 +317,92 @@ class MouseCallbacks: public NimBLECharacteristicCallbacks {
             Serial.print(wheel);
             Serial.print(", ");
             Serial.println(pan);
-#ifdef ARDUINO_USB_MODE
-            Mouse.move(x, y, wheel, pan);
+
+            mouse_.move(x, y, wheel, pan);
             if (buttons != 0) {
-                Mouse.press(buttons);
+                mouse_.press(buttons);
             } else {
-                Mouse.release();
+                mouse_.release();
             }
-#endif
         }
     }
+
+private:
+    LED& statusLed_;
+    USBHIDMouse& mouse_;
 };
+
+uint32_t getDeviceSerialNumber() {
+    uint64_t chipid = ESP.getEfuseMac(); // Get chip ID from eFuse
+    return chipid % 10000;
+}
 
 void setup() {
     Serial.begin(115200);
     
-    Led.setup();
+    // Setup boot button
+    bootButton.attach(BOOT_BUTTON_PIN, INPUT_PULLUP);
+    bootButton.interval(2);
+    bootButton.setPressedState(LOW);
+    
+    statusLed.setup();
 
 #ifdef ARDUINO_USB_MODE
     USB.begin();
-    Keyboard.begin();
-    Mouse.begin();
 #endif
+    keyboard.begin();
+    mouse.begin();
+    
+    String deviceName = String("Remote Input ") + String(getDeviceSerialNumber());
     
     // Initialize BLE
-    NimBLEDevice::init("Remote Input Dongle");
+    NimBLEDevice::init(deviceName.c_str());
     
     NimBLEDevice::setPower(ESP_PWR_LVL_N0);
 
-    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_KEYBOARD_DISPLAY);
     NimBLEDevice::setSecurityAuth(true, true, true);
-
     NimBLEDevice::setMTU(32);
 
-    Server = NimBLEDevice::createServer();
-    Server->setCallbacks(new ServerCallbacks());
+    auto server = NimBLEDevice::createServer();
+    server->setCallbacks(new ServerCallbacks(statusLed, pairingConfirmation, server));
    
     // Create BLE Service
-    auto service = Server->createService(SERVICE_UUID);
+    auto service = server->createService(SERVICE_UUID);
     
     // Create Keyboard Characteristic
     auto keyboardCharacteristic = service->createCharacteristic(
         KEYBOARD_CHAR_UUID,
-        NIMBLE_PROPERTY::WRITE_NR
+        NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::WRITE_AUTHEN | NIMBLE_PROPERTY::WRITE_ENC
     );
-    keyboardCharacteristic->setCallbacks(new KeyboardCallbacks());
+    keyboardCharacteristic->setCallbacks(new KeyboardCallbacks(statusLed, keyboard));
     
     // Create Mouse Characteristic
     auto mouseCharacteristic = service->createCharacteristic(
         MOUSE_CHAR_UUID,
-        NIMBLE_PROPERTY::WRITE_NR
+        NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::WRITE_AUTHEN | NIMBLE_PROPERTY::WRITE_ENC
     );
-    mouseCharacteristic->setCallbacks(new MouseCallbacks());
+    mouseCharacteristic->setCallbacks(new MouseCallbacks(statusLed, mouse));
     
     // Start the service
     service->start();
 
-    Led.setBlink(LED_ADVERTISING_COLOR, CRGB::Black, LED_ADVERTISING_BLINK_INTERVAL);
+    statusLed.setBlink(LED_ADVERTISING_COLOR, CRGB::Black, LED_ADVERTISING_BLINK_INTERVAL);
 
     // Start advertising
-    auto advertising = Server->getAdvertising();
+    auto advertising = server->getAdvertising();
     advertising->addServiceUUID(SERVICE_UUID);
-    advertising->setName("Remote Input Dongle");
+    advertising->setName(deviceName.c_str());
     advertising->enableScanResponse(true);
     advertising->setPreferredParams(6, 8);
     advertising->start();
     
-    Serial.println("Remote Input Dongle is Ready!");
+    Serial.print(deviceName);
+    Serial.println(" Dongle is Ready!");
 }
 
 void loop() {
-    Led.loop();
+    statusLed.loop();
+    pairingConfirmation.loop();
     delay(100);
 }
