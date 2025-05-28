@@ -8,17 +8,18 @@
 #include <NimBLEUtils.h>
 #include <FastLED.h>
 
+static const size_t MaxKeysInReport = 6;
+
 #ifdef ARDUINO_USB_MODE
 #include "USB.h"
 #include "USBHIDKeyboard.h"
 #include "USBHIDMouse.h"
 #else
-static const size_t MaxKeys = 6;
 
 struct KeyReport {
     uint8_t modifiers;
     uint8_t reserved;
-    uint8_t keys[MaxKeys];
+    uint8_t keys[MaxKeysInReport];
 };
 
 class USBHIDKeyboard {
@@ -47,6 +48,9 @@ public:
 // LED Configuration
 const unsigned long LED_ADVERTISING_BLINK_INTERVAL = 1000;
 const CRGB LED_ADVERTISING_COLOR = CRGB::Blue;
+const CRGB LED_PAIRING_COLOR = CRGB::Yellow;
+const CRGB LED_PAIRING_REJECTED_COLOR = CRGB::Red;
+const CRGB LED_PAIRING_CONFIRMED_COLOR = CRGB::Green;
 const CRGB LED_CONNECTED_COLOR = CRGB::Blue;
 const CRGB LED_KEYBOARD_EVENT_COLOR = CRGB::Red;
 const CRGB LED_MOUSE_EVENT_COLOR = CRGB::Green;
@@ -131,15 +135,15 @@ class PairingConfirmation {
 public:
     const unsigned long PAIRING_REQUEST_TIMEOUT = 30000;
 
-    PairingConfirmation(Bounce2::Button& bootButton, LED& statusLed, USBHIDKeyboard& keyboard): 
-        bootButton_(bootButton), statusLed_(statusLed), keyboard_(keyboard) {}
+    PairingConfirmation(Bounce2::Button& confirmButton, LED& statusLed, USBHIDKeyboard& keyboard): 
+        confirmButton_(confirmButton), statusLed_(statusLed), keyboard_(keyboard) {}
 
     bool wait_for_confirmation(uint32_t pin) {
         std::unique_lock<std::mutex> lock(mutex_);
         pairing_request_time_ = millis();
         is_pairing_requested_ = true;
         pin_ = pin;
-        statusLed_.setBlink(CRGB::Yellow, CRGB::Black, 500);  // Blink yellow while waiting for confirmation
+        statusLed_.setBlink(LED_PAIRING_COLOR, CRGB::Black, 500);  // Blink yellow while waiting for confirmation
         cv_.wait(lock, [this] { return !is_pairing_requested_; });
         bool result = is_pairing_confirmed_;
         is_pairing_confirmed_ = false;
@@ -147,33 +151,32 @@ public:
     }
 
     void confirm() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (is_pairing_requested_) {
+        if (std::lock_guard<std::mutex> lock(mutex_); is_pairing_requested_) {
             is_pairing_confirmed_ = true;
             is_pairing_requested_ = false;
             cv_.notify_all();
             Serial.println("Pairing confirmed");
         }
+        statusLed_.setSolid(LED_PAIRING_CONFIRMED_COLOR);
     }
 
     void reject() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (is_pairing_requested_) {
+        if (std::lock_guard<std::mutex> lock(mutex_); is_pairing_requested_) {
             is_pairing_confirmed_ = false;
             is_pairing_requested_ = false;
             cv_.notify_all();
             Serial.println("Pairing rejected");
         }
+        statusLed_.setSolid(LED_PAIRING_REJECTED_COLOR);
     }
 
     void loop() {
-        bootButton_.update();
-        if (bootButton_.pressed()) {
+        confirmButton_.update();
+        if (confirmButton_.pressed()) {
             confirm();
         }
 
-        std::unique_lock<std::mutex> lock(mutex_);
-        if (is_pairing_requested_) {
+        if (std::unique_lock<std::mutex> lock(mutex_); is_pairing_requested_) {
             Serial.println("Pairing requested");
             if (pin_ != 0) {
                 String pin_str = String("PIN: ") + String(pin_) + String("\n") + String("Press button on dongle to confirm\n");
@@ -192,9 +195,9 @@ private:
     std::condition_variable cv_;
     bool is_pairing_requested_{false};
     bool is_pairing_confirmed_{false};
-    unsigned long pairing_request_time_ = 0;
-    uint32_t pin_ = 0;
-    Bounce2::Button& bootButton_;
+    unsigned long pairing_request_time_{0};
+    uint32_t pin_{0};
+    Bounce2::Button& confirmButton_;
     LED& statusLed_;
     USBHIDKeyboard& keyboard_;
 };
@@ -260,9 +263,8 @@ public:
 private:
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& ) override {
         std::vector<uint8_t> value = pCharacteristic->getValue();
-        const auto MaxKeys = 6;
 
-        if (value.size() >= 2 && value.size() <= 1 + MaxKeys) {
+        if (value.size() >= 2 && value.size() <= 1 + MaxKeysInReport) {
             statusLed_.setTemp(LED_KEYBOARD_EVENT_COLOR);
             // Format: modifiers, key1 [, key2, key3, key4, key5, key6]
             KeyReport report;
