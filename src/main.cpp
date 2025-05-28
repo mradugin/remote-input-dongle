@@ -41,26 +41,27 @@ public:
 #endif
 
 // BLE Service and Characteristic UUIDs
-#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define KEYBOARD_CHAR_UUID  "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define MOUSE_CHAR_UUID     "beb5483e-36e1-4688-b7f5-ea07361b26a9"
-
-// LED Configuration
-const unsigned long LED_ADVERTISING_BLINK_INTERVAL = 1000;
-const CRGB LED_ADVERTISING_COLOR = CRGB::Blue;
-const CRGB LED_PAIRING_COLOR = CRGB::Yellow;
-const CRGB LED_PAIRING_REJECTED_COLOR = CRGB::Red;
-const CRGB LED_PAIRING_CONFIRMED_COLOR = CRGB::Green;
-const CRGB LED_CONNECTED_COLOR = CRGB::Blue;
-const CRGB LED_KEYBOARD_EVENT_COLOR = CRGB::Red;
-const CRGB LED_MOUSE_EVENT_COLOR = CRGB::Green;
+#define ServiceUuid        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define KeyboardCharUuid  "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define MouseCharUuid     "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
 // Button configuration
-const uint8_t BOOT_BUTTON_PIN = 0;  // ESP32-S3 boot button
+const uint8_t BootButtonPin = 0;  // ESP32-S3 boot button
 Bounce2::Button bootButton = Bounce2::Button();
 
 USBHIDKeyboard keyboard;
 USBHIDMouse mouse;
+
+class LedMode {
+public:
+    LedMode(CRGB onColor, CRGB offColor, unsigned long blinkInterval): 
+        onColor_(onColor), offColor_(offColor), blinkInterval_(blinkInterval) {}
+    explicit LedMode(CRGB onColor) : onColor_(onColor) {}
+
+    CRGB onColor_;
+    CRGB offColor_;
+    unsigned long blinkInterval_ {0};
+};
 
 class LED {
 public:
@@ -75,45 +76,34 @@ public:
         FastLED.show();
     }
 
-    void setTemp(CRGB color) {
+    void setVolatileColor(CRGB color) {
         std::lock_guard<std::mutex> lock(mutex_);
-        blinkInterval_ = 0;
         led_ = color;
         FastLED.show();
     }
 
-    void setSolid(CRGB color) {
+    void setMode(LedMode mode) {
         std::lock_guard<std::mutex> lock(mutex_);
-        blinkInterval_ = 0;
-        onColor_ = color;
-        led_ = color;
-        FastLED.show();
-    }
-
-    void setBlink(CRGB onColor, CRGB offColor, unsigned long interval) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        onColor_ = onColor;
-        offColor_ = offColor;
-        blinkInterval_ = interval;
+        ledMode_ = mode;
+        led_ = mode.onColor_;
         lastBlinkTime_ = millis();
         ledState_ = true;
-        led_ = onColor;
         FastLED.show();
     }
 
     void loop() {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (blinkInterval_ > 0) {
-            if (lastBlinkTime_ + blinkInterval_ < millis()) {
+        if (ledMode_.blinkInterval_ > 0) {
+            if (lastBlinkTime_ + ledMode_.blinkInterval_ < millis()) {
                 ledState_ = !ledState_;
-                led_ = ledState_ ? onColor_ : offColor_;
+                led_ = ledState_ ? ledMode_.onColor_ : ledMode_.offColor_;
                 lastBlinkTime_ = millis();
                 FastLED.show();
             }
         }
         else {
-            if (led_ != onColor_) {
-                led_ = onColor_;
+            if (led_ != ledMode_.onColor_) {
+                led_ = ledMode_.onColor_;
                 FastLED.show();
             }
         }
@@ -121,13 +111,20 @@ public:
 
 private:
     CRGB led_;
-    CRGB onColor_;
-    CRGB offColor_;
-    unsigned long blinkInterval_ = 0;
-    bool ledState_ = false;
-    unsigned long lastBlinkTime_ = 0;
+    LedMode ledMode_{CRGB::Black};
+    bool ledState_ {false};
+    unsigned long lastBlinkTime_ {0};
     std::mutex mutex_;
 };
+
+// LED Configuration
+const LedMode LedAdvertisingMode = LedMode(CRGB::Blue, CRGB::Black, 1000);
+const LedMode LedPairingMode = LedMode(CRGB::Yellow);
+const LedMode LedPairingRejectedMode = LedMode(CRGB::Red);
+const LedMode LedPairingConfirmedMode = LedMode(CRGB::Green);
+const LedMode LedConnectedMode = LedMode(CRGB::Blue);
+const CRGB LedKeyboardEventColor = CRGB::Red;
+const CRGB LedMouseEventColor = CRGB::Green;
 
 LED statusLed;
 
@@ -138,54 +135,56 @@ public:
     PairingConfirmation(Bounce2::Button& confirmButton, LED& statusLed, USBHIDKeyboard& keyboard): 
         confirmButton_(confirmButton), statusLed_(statusLed), keyboard_(keyboard) {}
 
-    bool wait_for_confirmation(uint32_t pin) {
+    bool waitForConfirmation(uint32_t pin) {
         std::unique_lock<std::mutex> lock(mutex_);
-        pairing_request_time_ = millis();
-        is_pairing_requested_ = true;
+        pairingRequestTime_ = millis();
+        isPairingRequested_ = true;
         pin_ = pin;
-        statusLed_.setBlink(LED_PAIRING_COLOR, CRGB::Black, 500);  // Blink yellow while waiting for confirmation
-        cv_.wait(lock, [this] { return !is_pairing_requested_; });
-        bool result = is_pairing_confirmed_;
-        is_pairing_confirmed_ = false;
+        statusLed_.setMode(LedPairingMode);
+        cv_.wait(lock, [this] { return !isPairingRequested_; });
+        bool result = isPairingConfirmed_;
+        isPairingConfirmed_ = false;
         return result;
     }
 
     void confirm() {
-        if (std::lock_guard<std::mutex> lock(mutex_); is_pairing_requested_) {
-            is_pairing_confirmed_ = true;
-            is_pairing_requested_ = false;
+        if (std::unique_lock<std::mutex> lock(mutex_); isPairingRequested_) {
+            isPairingConfirmed_ = true;
+            isPairingRequested_ = false;
+            lock.unlock();
             cv_.notify_all();
             Serial.println("Pairing confirmed");
-        }
-        statusLed_.setSolid(LED_PAIRING_CONFIRMED_COLOR);
+            statusLed_.setMode(LedPairingConfirmedMode);
+           }
     }
 
     void reject() {
-        if (std::lock_guard<std::mutex> lock(mutex_); is_pairing_requested_) {
-            is_pairing_confirmed_ = false;
-            is_pairing_requested_ = false;
+        if (std::unique_lock<std::mutex> lock(mutex_); isPairingRequested_) {
+            isPairingConfirmed_ = false;
+            isPairingRequested_ = false;
+            lock.unlock();
             cv_.notify_all();
             Serial.println("Pairing rejected");
+            statusLed_.setMode(LedPairingRejectedMode);
         }
-        statusLed_.setSolid(LED_PAIRING_REJECTED_COLOR);
     }
 
     void loop() {
-        confirmButton_.update();
-        if (confirmButton_.pressed()) {
-            confirm();
-        }
-
-        if (std::unique_lock<std::mutex> lock(mutex_); is_pairing_requested_) {
-            Serial.println("Pairing requested");
+        if (std::unique_lock<std::mutex> lock(mutex_); isPairingRequested_) {
             if (pin_ != 0) {
-                String pin_str = String("PIN: ") + String(pin_) + String("\n") + String("Press button on dongle to confirm\n");
+                String pin_str = String("PIN: ") + String(pin_) + String("\n") + String("Press button on the dongle to confirm\n");
                 keyboard_.write((uint8_t*)pin_str.c_str(), pin_str.length());
                 pin_ = 0;
             }
-            if (millis() - pairing_request_time_ > PAIRING_REQUEST_TIMEOUT) {
+            if (millis() - pairingRequestTime_ > PAIRING_REQUEST_TIMEOUT) {
                 lock.unlock();
                 reject();
+            }
+            else {
+                lock.unlock();
+                if (confirmButton_.pressed()) {
+                    confirm();
+                }
             }
         }
     }
@@ -193,9 +192,9 @@ public:
 private:
     std::mutex mutex_;
     std::condition_variable cv_;
-    bool is_pairing_requested_{false};
-    bool is_pairing_confirmed_{false};
-    unsigned long pairing_request_time_{0};
+    bool isPairingRequested_{false};
+    bool isPairingConfirmed_{false};
+    unsigned long pairingRequestTime_{0};
     uint32_t pin_{0};
     Bounce2::Button& confirmButton_;
     LED& statusLed_;
@@ -222,14 +221,12 @@ private:
     void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
         Serial.println("Device disconnected");
 
-        statusLed_.setBlink(LED_ADVERTISING_COLOR, CRGB::Black, LED_ADVERTISING_BLINK_INTERVAL);
-
-        // Restart advertising
+        statusLed_.setMode(LedAdvertisingMode);
         server->getAdvertising()->start();
     }
 
     void onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t pin) override {
-        NimBLEDevice::injectConfirmPasskey(connInfo, pairingConfirmation_.wait_for_confirmation(pin));
+        NimBLEDevice::injectConfirmPasskey(connInfo, pairingConfirmation_.waitForConfirmation(pin));
     }
 
     void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
@@ -245,7 +242,7 @@ private:
             Serial.println("Authentication failed");
             server_->disconnect(connInfo);
         } else {
-            statusLed_.setSolid(LED_CONNECTED_COLOR);
+            statusLed_.setMode(LedConnectedMode);
         }
     }
 
@@ -255,7 +252,6 @@ private:
     NimBLEServer* server_;
 };
 
-// Callback for keyboard characteristic
 class KeyboardCallbacks: public NimBLECharacteristicCallbacks {
 public:
     KeyboardCallbacks(LED& statusLed, USBHIDKeyboard& keyboard): 
@@ -265,7 +261,7 @@ private:
         std::vector<uint8_t> value = pCharacteristic->getValue();
 
         if (value.size() >= 2 && value.size() <= 1 + MaxKeysInReport) {
-            statusLed_.setTemp(LED_KEYBOARD_EVENT_COLOR);
+            statusLed_.setVolatileColor(LedKeyboardEventColor);
             // Format: modifiers, key1 [, key2, key3, key4, key5, key6]
             KeyReport report;
             memset(&report, 0, sizeof(report));
@@ -293,7 +289,6 @@ private:
     USBHIDKeyboard& keyboard_;
 };
 
-// Callback for mouse characteristic
 class MouseCallbacks: public NimBLECharacteristicCallbacks {
 public:
     MouseCallbacks(LED& statusLed, USBHIDMouse& mouse) : statusLed_(statusLed), mouse_(mouse) {}
@@ -302,7 +297,7 @@ private:
         std::vector<uint8_t> value = pCharacteristic->getValue();
 
         if (value.size() >= 3 && value.size() <= 5) {
-            statusLed_.setTemp(LED_MOUSE_EVENT_COLOR);
+            statusLed_.setVolatileColor(LedMouseEventColor);
             // Format: buttons, x, y, wheel, pan
             uint8_t buttons = value[0];
             int8_t x = value[1];
@@ -343,7 +338,7 @@ void setup() {
     Serial.begin(115200);
     
     // Setup boot button
-    bootButton.attach(BOOT_BUTTON_PIN, INPUT_PULLUP);
+    bootButton.attach(BootButtonPin, INPUT_PULLUP);
     bootButton.interval(2);
     bootButton.setPressedState(LOW);
     
@@ -370,18 +365,18 @@ void setup() {
     server->setCallbacks(new ServerCallbacks(statusLed, pairingConfirmation, server));
    
     // Create BLE Service
-    auto service = server->createService(SERVICE_UUID);
+    auto service = server->createService(ServiceUuid);
     
     // Create Keyboard Characteristic
     auto keyboardCharacteristic = service->createCharacteristic(
-        KEYBOARD_CHAR_UUID,
+        KeyboardCharUuid,
         NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::WRITE_AUTHEN | NIMBLE_PROPERTY::WRITE_ENC
     );
     keyboardCharacteristic->setCallbacks(new KeyboardCallbacks(statusLed, keyboard));
     
     // Create Mouse Characteristic
     auto mouseCharacteristic = service->createCharacteristic(
-        MOUSE_CHAR_UUID,
+        MouseCharUuid,
         NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::WRITE_AUTHEN | NIMBLE_PROPERTY::WRITE_ENC
     );
     mouseCharacteristic->setCallbacks(new MouseCallbacks(statusLed, mouse));
@@ -389,11 +384,11 @@ void setup() {
     // Start the service
     service->start();
 
-    statusLed.setBlink(LED_ADVERTISING_COLOR, CRGB::Black, LED_ADVERTISING_BLINK_INTERVAL);
+    statusLed.setMode(LedAdvertisingMode);
 
     // Start advertising
     auto advertising = server->getAdvertising();
-    advertising->addServiceUUID(SERVICE_UUID);
+    advertising->addServiceUUID(ServiceUuid);
     advertising->setName(deviceName.c_str());
     advertising->enableScanResponse(true);
     advertising->setPreferredParams(6, 8);
@@ -404,6 +399,7 @@ void setup() {
 }
 
 void loop() {
+    bootButton.update();
     statusLed.loop();
     pairingConfirmation.loop();
     delay(100);
