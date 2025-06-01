@@ -44,6 +44,7 @@ public:
 #define ServiceUuid        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define KeyboardCharUuid  "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define MouseCharUuid     "beb5483e-36e1-4688-b7f5-ea07361b26a9"
+#define StatusCharUuid    "beb5483e-36e1-4688-b7f5-ea07361b26aa"
 
 // Button configuration
 const uint8_t BootButtonPin = 0;  // ESP32-S3 boot button
@@ -329,6 +330,14 @@ private:
     USBHIDMouse& mouse_;
 };
 
+class StatusCallbacks: public NimBLECharacteristicCallbacks {
+public:
+    void onRead(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& connInfo) override {
+        uint8_t status = 1;
+        pCharacteristic->setValue(&status, sizeof(status));
+    }
+};
+
 uint32_t getDeviceSerialNumber() {
     uint64_t chipid = ESP.getEfuseMac(); // Get chip ID from eFuse
     return chipid % 10000;
@@ -380,6 +389,13 @@ void setup() {
         NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::WRITE_AUTHEN | NIMBLE_PROPERTY::WRITE_ENC
     );
     mouseCharacteristic->setCallbacks(new MouseCallbacks(statusLed, mouse));
+    
+    // Create Status Characteristic
+    auto statusCharacteristic = service->createCharacteristic(
+        StatusCharUuid,
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::READ_AUTHEN | NIMBLE_PROPERTY::READ_ENC
+    );
+    statusCharacteristic->setCallbacks(new StatusCallbacks());
     
     // Start the service
     service->start();
