@@ -170,20 +170,38 @@ public:
         }
     }
 
+    void writePin() {
+        String pin_str = String("Pairing PIN: ") + String(pin_);
+        pinStringLength_ = pin_str.length();
+        keyboard_.write((uint8_t*)pin_str.c_str(), pinStringLength_);
+        pin_ = 0;
+    }
+
+    void erasePin() {
+        const uint8_t BackspaceKey = 0x08;
+        for (int i = 0; i < pinStringLength_; i++) {
+            keyboard_.press(BackspaceKey);
+            delay(5);
+            keyboard_.release(BackspaceKey);
+            delay(5);
+        }
+        pinStringLength_ = 0;
+    }
+
     void loop() {
         if (std::unique_lock<std::mutex> lock(mutex_); isPairingRequested_) {
             if (pin_ != 0) {
-                String pin_str = String("PIN: ") + String(pin_) + String("\n") + String("Press button on the dongle to confirm\n");
-                keyboard_.write((uint8_t*)pin_str.c_str(), pin_str.length());
-                pin_ = 0;
+                writePin();
             }
             if (millis() - pairingRequestTime_ > PAIRING_REQUEST_TIMEOUT) {
                 lock.unlock();
+                erasePin();
                 reject();
             }
             else {
                 lock.unlock();
                 if (confirmButton_.pressed()) {
+                    erasePin();
                     confirm();
                 }
             }
@@ -197,6 +215,7 @@ private:
     bool isPairingConfirmed_{false};
     unsigned long pairingRequestTime_{0};
     uint32_t pin_{0};
+    size_t pinStringLength_{0};
     Bounce2::Button& confirmButton_;
     LED& statusLed_;
     USBHIDKeyboard& keyboard_;
@@ -338,9 +357,13 @@ public:
     }
 };
 
-uint32_t getDeviceSerialNumber() {
+String getDeviceSerialNumber() {
     uint64_t chipid = ESP.getEfuseMac(); // Get chip ID from eFuse
-    return chipid % 10000;
+    auto serialNumber = String(chipid % 10000);
+    while (serialNumber.length() < 4) {
+        serialNumber = "0" + serialNumber;
+    }
+    return serialNumber;
 }
 
 void setup() {
@@ -359,7 +382,7 @@ void setup() {
     keyboard.begin();
     mouse.begin();
     
-    String deviceName = String("Remote Input ") + String(getDeviceSerialNumber());
+    String deviceName = String("Remote Input ") + getDeviceSerialNumber();
     
     // Initialize BLE
     NimBLEDevice::init(deviceName.c_str());
