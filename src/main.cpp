@@ -41,10 +41,18 @@ public:
 #endif
 
 // BLE Service and Characteristic UUIDs
-#define ServiceUuid        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define KeyboardCharUuid  "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define MouseCharUuid     "beb5483e-36e1-4688-b7f5-ea07361b26a9"
-#define StatusCharUuid    "beb5483e-36e1-4688-b7f5-ea07361b26aa"
+#define RemoteInputServiceUuid  "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define KeyboardCharUuid        "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define MouseCharUuid           "beb5483e-36e1-4688-b7f5-ea07361b26a9"
+#define StatusCharUuid          "beb5483e-36e1-4688-b7f5-ea07361b26aa"
+
+// Device Information Service UUIDs
+#define DisServiceUuid        "180A"  // Standard Device Information Service UUID
+#define ManufacturerNameUuid  "2A29"  // Manufacturer Name String
+#define ModelNumberUuid       "2A24"  // Model Number String
+#define SerialNumberUuid      "2A25"  // Serial Number String
+#define FirmwareRevUuid       "2A26"  // Firmware Revision String
+#define HardwareRevUuid       "2A27"  // Hardware Revision String
 
 // Button configuration
 const uint8_t BootButtonPin = 0;  // ESP32-S3 boot button
@@ -397,7 +405,7 @@ void setup() {
     server->setCallbacks(new ServerCallbacks(statusLed, pairingConfirmation, server));
    
     // Create BLE Service
-    auto service = server->createService(ServiceUuid);
+    auto service = server->createService(RemoteInputServiceUuid);
     
     // Create Keyboard Characteristic
     auto keyboardCharacteristic = service->createCharacteristic(
@@ -423,11 +431,53 @@ void setup() {
     // Start the service
     service->start();
 
+    // Create Device Information Service
+    auto disService = server->createService(DisServiceUuid);
+
+    // Add Manufacturer Name characteristic
+    auto manufacturerNameChar = disService->createCharacteristic(
+        ManufacturerNameUuid,
+        NIMBLE_PROPERTY::READ
+    );
+    manufacturerNameChar->setValue("radugin.com");
+
+    // Add Model Number characteristic
+    auto modelNumberChar = disService->createCharacteristic(
+        ModelNumberUuid,
+        NIMBLE_PROPERTY::READ
+    );
+    modelNumberChar->setValue("Remote Input Dongle");
+
+    // Add Serial Number characteristic
+    auto serialNumberChar = disService->createCharacteristic(
+        SerialNumberUuid,
+        NIMBLE_PROPERTY::READ
+    );
+    serialNumberChar->setValue(getDeviceSerialNumber());
+
+    // Add Firmware Revision characteristic
+    auto firmwareRevChar = disService->createCharacteristic(
+        FirmwareRevUuid,
+        NIMBLE_PROPERTY::READ
+    );
+    firmwareRevChar->setValue("1.0.0");
+
+    // Add Hardware Revision characteristic
+    auto hardwareRevChar = disService->createCharacteristic(
+        HardwareRevUuid,
+        NIMBLE_PROPERTY::READ
+    );
+    hardwareRevChar->setValue("1.0.0");
+
+    // Start the Device Information Service
+    disService->start();
+
     statusLed.setMode(LedAdvertisingMode);
 
     // Start advertising
     auto advertising = server->getAdvertising();
-    advertising->addServiceUUID(ServiceUuid);
+    advertising->addServiceUUID(RemoteInputServiceUuid);
+    advertising->addServiceUUID(DisServiceUuid);
     advertising->setName(deviceName.c_str());
     advertising->enableScanResponse(true);
     advertising->setPreferredParams(6, 8);
