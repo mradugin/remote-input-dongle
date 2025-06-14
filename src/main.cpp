@@ -167,40 +167,25 @@ public:
             if (millis() - pairingRequestTime_ > PAIRING_REQUEST_TIMEOUT) {
                 lock.unlock();
                 Serial.println("Pairing request timeout");
-                reject();
+                complete(false);
             }
             else {
                 lock.unlock();
                 if (confirmButton_.pressed()) {
-                    confirm();
+                    complete(true);
                 }
             }
         }
     }
 
 private:
-    void confirm() {
-        if (std::unique_lock<std::mutex> lock(mutex_); isPairingRequested_) {
-            erasePin();
-            isPairingConfirmed_ = true;
-            isPairingRequested_ = false;
-            lock.unlock();
-            cv_.notify_all();
-            Serial.println("Pairing confirmed");
-            statusLed_.setMode(LedPairingConfirmedMode);
-           }
-    }
-
-    void reject() {
-        if (std::unique_lock<std::mutex> lock(mutex_); isPairingRequested_) {
-            erasePin();
-            isPairingConfirmed_ = false;
-            isPairingRequested_ = false;
-            lock.unlock();
-            cv_.notify_all();
-            Serial.println("Pairing rejected");
-            statusLed_.setMode(LedPairingRejectedMode);
-        }
+    void complete(bool confirmed) {
+        erasePin();
+        isPairingConfirmed_ = confirmed;
+        isPairingRequested_ = false;
+        cv_.notify_all();
+        Serial.println(confirmed ? "Pairing confirmed" : "Pairing rejected");
+        statusLed_.setMode(confirmed ? LedPairingConfirmedMode : LedPairingRejectedMode);
     }
 
     void writePin() {
