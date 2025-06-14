@@ -29,6 +29,8 @@ public:
     size_t write(const uint8_t *buffer, size_t size) {
         return size;
     }
+    void write(uint8_t key) {}
+    void releaseAll() {}
 };
 
 class USBHIDMouse {  
@@ -163,6 +165,8 @@ public:
                 pin_ = 0;
             }
             if (millis() - pairingRequestTime_ > PAIRING_REQUEST_TIMEOUT) {
+                lock.unlock();
+                Serial.println("Pairing request timeout");
                 reject();
             }
             else {
