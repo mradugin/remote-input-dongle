@@ -79,7 +79,7 @@ public:
         const uint8_t LED_PIN = 21;
         const uint8_t NUM_LEDS = 1;
         const uint8_t LED_BRIGHTNESS = 30;
-        FastLED.addLeds<WS2812, LED_PIN, RGB>(&led_, NUM_LEDS);
+        FastLED.addLeds<WS2812, LED_PIN, GRB>(&led_, NUM_LEDS);
         FastLED.setBrightness(LED_BRIGHTNESS);
         led_ = CRGB::Black;
         FastLED.show();
@@ -156,8 +156,28 @@ public:
         return result;
     }
 
+    void loop() {
+        if (std::unique_lock<std::mutex> lock(mutex_); isPairingRequested_) {
+            if (pin_ != 0) {
+                writePin();
+                pin_ = 0;
+            }
+            if (millis() - pairingRequestTime_ > PAIRING_REQUEST_TIMEOUT) {
+                reject();
+            }
+            else {
+                lock.unlock();
+                if (confirmButton_.pressed()) {
+                    confirm();
+                }
+            }
+        }
+    }
+
+private:
     void confirm() {
         if (std::unique_lock<std::mutex> lock(mutex_); isPairingRequested_) {
+            erasePin();
             isPairingConfirmed_ = true;
             isPairingRequested_ = false;
             lock.unlock();
@@ -169,6 +189,7 @@ public:
 
     void reject() {
         if (std::unique_lock<std::mutex> lock(mutex_); isPairingRequested_) {
+            erasePin();
             isPairingConfirmed_ = false;
             isPairingRequested_ = false;
             lock.unlock();
@@ -181,42 +202,18 @@ public:
     void writePin() {
         String pin_str = String("Pairing PIN: ") + String(pin_);
         pinStringLength_ = pin_str.length();
+        keyboard_.releaseAll();
         keyboard_.write((uint8_t*)pin_str.c_str(), pinStringLength_);
-        pin_ = 0;
     }
 
     void erasePin() {
         const uint8_t BackspaceKey = 0x08;
         for (int i = 0; i < pinStringLength_; i++) {
-            keyboard_.press(BackspaceKey);
-            delay(5);
-            keyboard_.release(BackspaceKey);
-            delay(5);
+            keyboard_.write(BackspaceKey);
         }
         pinStringLength_ = 0;
     }
 
-    void loop() {
-        if (std::unique_lock<std::mutex> lock(mutex_); isPairingRequested_) {
-            if (pin_ != 0) {
-                writePin();
-            }
-            if (millis() - pairingRequestTime_ > PAIRING_REQUEST_TIMEOUT) {
-                lock.unlock();
-                erasePin();
-                reject();
-            }
-            else {
-                lock.unlock();
-                if (confirmButton_.pressed()) {
-                    erasePin();
-                    confirm();
-                }
-            }
-        }
-    }
-
-private:
     std::mutex mutex_;
     std::condition_variable cv_;
     bool isPairingRequested_{false};
@@ -254,7 +251,11 @@ private:
     }
 
     void onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t pin) override {
-        NimBLEDevice::injectConfirmPasskey(connInfo, pairingConfirmation_.waitForConfirmation(pin));
+        Serial.println("Confirm passkey");
+        bool result = pairingConfirmation_.waitForConfirmation(pin);
+        Serial.print("Confirm passkey result: ");
+        Serial.println(result);
+        NimBLEDevice::injectConfirmPasskey(connInfo, result);
     }
 
     void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
