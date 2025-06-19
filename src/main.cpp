@@ -56,13 +56,6 @@ public:
 #define FirmwareRevUuid       "2A26"  // Firmware Revision String
 #define HardwareRevUuid       "2A27"  // Hardware Revision String
 
-// Button configuration
-const uint8_t BootButtonPin = 0;  // ESP32-S3 boot button
-Bounce2::Button bootButton = Bounce2::Button();
-
-USBHIDKeyboard keyboard;
-USBHIDMouse mouse;
-
 class LedMode {
 public:
     LedMode(CRGB onColor, CRGB offColor, unsigned long blinkInterval): 
@@ -73,6 +66,15 @@ public:
     CRGB offColor_;
     unsigned long blinkInterval_ {0};
 };
+
+// LED Configuration
+const LedMode LedAdvertisingMode = LedMode(CRGB::Blue, CRGB::Black, 1000);
+const LedMode LedPairingMode = LedMode(CRGB::Yellow);
+const LedMode LedPairingRejectedMode = LedMode(CRGB::Red);
+const LedMode LedPairingConfirmedMode = LedMode(CRGB::Green);
+const LedMode LedConnectedMode = LedMode(CRGB::Blue);
+const CRGB LedKeyboardEventColor = CRGB::Red;
+const CRGB LedMouseEventColor = CRGB::Green;
 
 class LED {
 public:
@@ -127,17 +129,6 @@ private:
     unsigned long lastBlinkTime_ {0};
     std::mutex mutex_;
 };
-
-// LED Configuration
-const LedMode LedAdvertisingMode = LedMode(CRGB::Blue, CRGB::Black, 1000);
-const LedMode LedPairingMode = LedMode(CRGB::Yellow);
-const LedMode LedPairingRejectedMode = LedMode(CRGB::Red);
-const LedMode LedPairingConfirmedMode = LedMode(CRGB::Green);
-const LedMode LedConnectedMode = LedMode(CRGB::Blue);
-const CRGB LedKeyboardEventColor = CRGB::Red;
-const CRGB LedMouseEventColor = CRGB::Green;
-
-LED statusLed;
 
 class PairingConfirmation {
 public:
@@ -214,8 +205,6 @@ private:
     LED& statusLed_;
     USBHIDKeyboard& keyboard_;
 };
-
-PairingConfirmation pairingConfirmation(bootButton, statusLed, keyboard);
 
 // Callback for device connection
 class ServerCallbacks: public NimBLEServerCallbacks {
@@ -363,6 +352,18 @@ String getDeviceSerialNumber() {
     }
     return serialNumber;
 }
+
+
+// Button configuration
+const uint8_t BootButtonPin = 0;  // ESP32-S3 boot button
+Bounce2::Button bootButton = Bounce2::Button();
+
+USBHIDKeyboard keyboard;
+USBHIDMouse mouse;
+
+LED statusLed;
+
+PairingConfirmation pairingConfirmation(bootButton, statusLed, keyboard);
 
 void setup() {
     Serial.begin(115200);
