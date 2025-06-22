@@ -43,10 +43,10 @@ public:
 #endif
 
 // BLE Service and Characteristic UUIDs
-#define RemoteInputServiceUuid  "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define KeyboardCharUuid        "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define MouseCharUuid           "beb5483e-36e1-4688-b7f5-ea07361b26a9"
-#define StatusCharUuid          "beb5483e-36e1-4688-b7f5-ea07361b26aa"
+#define RemoteInputServiceUuid  "aa8713fe-6f22-4820-9edd-e8462b0762ea"
+#define KeyboardCharUuid        "9eeba577-04b8-4dc6-aeef-a9ac12eddb68"
+#define MouseCharUuid           "9eeba577-04b8-4dc6-aeef-a9ac12eddb69"
+#define StatusCharUuid          "9eeba577-04b8-4dc6-aeef-a9ac12eddb6a"
 
 // Device Information Service UUIDs
 #define DisServiceUuid        "180A"  // Standard Device Information Service UUID
